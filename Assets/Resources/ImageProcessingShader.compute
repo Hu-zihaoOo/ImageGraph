@@ -1,0 +1,100 @@
+#pragma kernel CSMain
+#pragma kernel ColorAdjustment
+#pragma kernel BlurEffect
+
+Texture2D<float4> InputTexture;
+RWTexture2D<float4> Result;
+SamplerState sampler_point_clamp;
+
+float Brightness;
+float Contrast;
+float Saturation;
+float Hue;
+int BlurRadius;
+
+float3 RGBtoHSV(float3 rgb)
+{
+    float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    float4 p = lerp(float4(rgb.bg, K.wz), float4(rgb.gb, K.xy), step(rgb.b, rgb.g));
+    float4 q = lerp(float4(p.xyw, rgb.r), float4(rgb.r, p.yzx), step(p.x, rgb.r));
+    
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+float3 HSVtoRGB(float3 hsv)
+{
+    float4 K = float4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    float3 p = abs(frac(hsv.xxx + K.xyz) * 6.0 - K.www);
+    return hsv.z * lerp(K.xxx, clamp(p - K.xxx, 0.0, 1.0), hsv.y);
+} 
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = float2(id.x, id.y) / float2(Result.Length.x, Result.Length.y);
+    float4 color = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    Result[id.xy] = color;
+}
+
+[numthreads(8,8,1)]
+void ColorAdjustment (uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = float2(id.x, id.y) / float2(Result.Length.x, Result.Length.y);
+    float4 color = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    
+
+    color.rgb *= Brightness;
+    
+
+    color.rgb = (color.rgb - 0.5f) * Contrast + 0.5f;
+    
+
+    float luminance = dot(color.rgb, float3(0.299f, 0.587f, 0.114f));
+    color.rgb = lerp(float3(luminance, luminance, luminance), color.rgb, Saturation);
+    
+
+    float3 hsv = RGBtoHSV(color.rgb);
+    hsv.x = fmod(hsv.x + Hue, 1.0f);
+    color.rgb = HSVtoRGB(hsv);
+    
+    Result[id.xy] = color;
+}
+
+[numthreads(8,8,1)]
+void BlurEffect (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)Result.Length.x || id.y >= (uint)Result.Length.y)
+        return;
+        
+    float4 sum = float4(0, 0, 0, 0);
+    int count = 0;
+    
+    for (int y = -BlurRadius; y <= BlurRadius; y++)
+    {
+        for (int x = -BlurRadius; x <= BlurRadius; x++)
+        {
+            int2 samplePos = int2(id.x + x, id.y + y);
+            // 检查采样位置是否在纹理范围内
+            if (samplePos.x >= 0 && samplePos.x < Result.Length.x && 
+                samplePos.y >= 0 && samplePos.y < Result.Length.y)
+            {
+                float2 uv = float2(samplePos) / float2(Result.Length.xy);
+                sum += InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+                count++;
+            }
+        }
+    }
+    
+    if (count > 0)
+    {
+        Result[id.xy] = sum / count;
+    }
+    else
+    {
+        float2 uv = float2(id.xy) / float2(Result.Length.xy);
+        Result[id.xy] = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    }
+}
+
