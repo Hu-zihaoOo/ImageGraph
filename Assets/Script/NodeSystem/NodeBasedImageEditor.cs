@@ -247,7 +247,10 @@ namespace NodeImageEditor
             {
                 if (node is BlurNode || node is ColorAdjustmentNode)
                 {
-                    outputNode = node;
+                    if (outputNode == null || node.NodeID.CompareTo(outputNode.NodeID) > 0)
+                    {
+                        outputNode = node;
+                    }
                 }
             }
             
@@ -272,38 +275,6 @@ namespace NodeImageEditor
             imageProcessingShader.Dispatch(kernelIndex, threadGroupsX, threadGroupsY, 1);
         }
         
-        private void ApplyColorAdjustment(RenderTexture input, RenderTexture output, ColorAdjustmentNode node)
-        {
-            if (imageProcessingShader == null)
-                return;
-
-            int kernelIndex = imageProcessingShader.FindKernel("ColorAdjustment");
-            imageProcessingShader.SetTexture(kernelIndex, "InputTexture", input);
-            imageProcessingShader.SetTexture(kernelIndex, "Result", output);
-            imageProcessingShader.SetFloat("Brightness", node.Brightness);
-            imageProcessingShader.SetFloat("Contrast", node.Contrast);
-            imageProcessingShader.SetFloat("Saturation", node.Saturation);
-            imageProcessingShader.SetFloat("Hue", node.Hue);
-
-            int threadGroupsX = Mathf.CeilToInt(output.width / 8.0f);
-            int threadGroupsY = Mathf.CeilToInt(output.height / 8.0f);
-            imageProcessingShader.Dispatch(kernelIndex, threadGroupsX, threadGroupsY, 1);
-        }
-        
-        private void ApplyBlur(RenderTexture input, RenderTexture output, BlurNode node)
-        {
-            if (imageProcessingShader == null)
-                return;
-
-            int kernelIndex = imageProcessingShader.FindKernel("BlurEffect");
-            imageProcessingShader.SetTexture(kernelIndex, "InputTexture", input);
-            imageProcessingShader.SetTexture(kernelIndex, "Result", output);
-            imageProcessingShader.SetInt("BlurRadius", node.BlurRadius);
-
-            int threadGroupsX = Mathf.CeilToInt(output.width / 8.0f);
-            int threadGroupsY = Mathf.CeilToInt(output.height / 8.0f);
-            imageProcessingShader.Dispatch(kernelIndex, threadGroupsX, threadGroupsY, 1);
-        }
         
         private void DrawToolbar()
         {
@@ -445,8 +416,8 @@ namespace NodeImageEditor
                 }
                 
                 // 确保有足够空间给按钮
-                GUILayout.Space(10);
-                currentHeight += 10;
+                GUILayout.Space(20);
+                currentHeight += 20;
             }
             else if (node is ColorAdjustmentNode colorNode)
             {

@@ -76,7 +76,7 @@ namespace NodeImageEditor
             return resultTexture;
         }
 
-        public void SetPreviewTexture(RenderTexture texture)
+        public new void SetPreviewTexture(RenderTexture texture)
         {
             if (texture != null)
             {

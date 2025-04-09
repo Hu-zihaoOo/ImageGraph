@@ -32,6 +32,18 @@ namespace NodeImageEditor
             return previewTexture;
         }
 
+        public new void SetPreviewTexture(RenderTexture texture)
+        {
+            if (texture != null)
+            {
+                previewTexture = new Texture2D(texture.width, texture.height);
+                RenderTexture.active = texture;
+                previewTexture.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
+                previewTexture.Apply();
+                RenderTexture.active = null;
+            }
+        }
+
         public override void ProcessPreview(RenderTexture input, RenderTexture output, Dictionary<string, BaseNode> nodeMap)
         {
             if (Texture != null)
