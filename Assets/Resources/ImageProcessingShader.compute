@@ -1,6 +1,7 @@
 #pragma kernel CSMain
 #pragma kernel ColorAdjustment
 #pragma kernel BlurEffect
+#pragma kernel TillingOffset
 
 Texture2D<float4> InputTexture;
 RWTexture2D<float4> Result;
@@ -11,6 +12,10 @@ float Contrast;
 float Saturation;
 float Hue;
 int BlurRadius;
+float TillingX;
+float TillingY;
+float OffsetX;
+float OffsetY;
 
 float3 RGBtoHSV(float3 rgb)
 {
@@ -96,5 +101,20 @@ void BlurEffect (uint3 id : SV_DispatchThreadID)
         float2 uv = float2(id.xy) / float2(Result.Length.xy);
         Result[id.xy] = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
     }
+}
+
+[numthreads(8,8,1)]
+void TillingOffset (uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = float2(id.x, id.y) / float2(Result.Length.x, Result.Length.y);
+    
+    // Apply tilling and offset
+    uv = uv * float2(TillingX, TillingY) + float2(OffsetX, OffsetY);
+    
+    // Apply wrapping/repeat
+    uv = frac(uv);
+    
+    float4 color = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    Result[id.xy] = color;
 }
 

@@ -245,7 +245,7 @@ namespace NodeImageEditor
             BaseNode outputNode = null;
             foreach (var node in graph.GetAllNodes())
             {
-                if (node is BlurNode || node is ColorAdjustmentNode)
+                if (node is BlurNode || node is ColorAdjustmentNode || node is TillingOffsetNode)
                 {
                     if (outputNode == null || node.NodeID.CompareTo(outputNode.NodeID) > 0)
                     {
@@ -297,8 +297,15 @@ namespace NodeImageEditor
             if (GUILayout.Button("Add Blur Node", EditorStyles.toolbarButton))
             {
                 var blurNode = new BlurNode();
-                blurNode.WindowRect = new Rect(300, 50, 200, 350); // 确保初始高度足够
+                blurNode.WindowRect = new Rect(300, 50, 200, 350);
                 graph.AddNode(blurNode);
+            }
+            
+            if (GUILayout.Button("Add Tilling & Offset Node", EditorStyles.toolbarButton))
+            {
+                var tillingNode = new TillingOffsetNode();
+                tillingNode.WindowRect = new Rect(300, 50, 200, 350);
+                graph.AddNode(tillingNode);
             }
             
             if (GUILayout.Button("Process Graph", EditorStyles.toolbarButton))
@@ -585,6 +592,88 @@ namespace NodeImageEditor
                     currentHeight += 170;
                 }
             }
+            else if (node is TillingOffsetNode tillingNode)
+            {
+                // 标题区域
+                GUILayout.Label(node.Name, EditorStyles.boldLabel);
+                currentHeight += EditorGUIUtility.singleLineHeight + 5;
+                
+                // Tilling & Offset adjustment area
+                GUILayout.BeginVertical(GUI.skin.box);
+                EditorGUI.BeginChangeCheck();
+                tillingNode.TillingX = EditorGUILayout.FloatField("Tilling X", tillingNode.TillingX);
+                tillingNode.TillingY = EditorGUILayout.FloatField("Tilling Y", tillingNode.TillingY);
+                tillingNode.OffsetX = EditorGUILayout.FloatField("Offset X", tillingNode.OffsetX);
+                tillingNode.OffsetY = EditorGUILayout.FloatField("Offset Y", tillingNode.OffsetY);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Repaint();
+                }
+                GUILayout.EndVertical();
+                currentHeight += EditorGUIUtility.singleLineHeight * 5 + 15;
+                
+                // 计算端口位置
+                float portPositionY = Mathf.Min(70, originalHeight * 0.3f);
+                
+                // 输入端口
+                Rect inputRect = new Rect(-12, portPositionY, 24, 24);
+                Color oldColor = GUI.color;
+                if (isConnecting)
+                {
+                    if (connectionStartNode == node && connectionStartPort == 0)
+                        GUI.color = Color.yellow;
+                    else if (connectionStartNode != node)
+                        GUI.color = Color.green;
+                    else
+                        GUI.color = new Color(0.2f, 0.6f, 0.8f);
+                }
+                else
+                {
+                    GUI.color = new Color(0.2f, 0.6f, 0.8f);
+                }
+                
+                GUI.DrawTexture(inputRect, EditorGUIUtility.IconContent("d_GridLayoutGroup Icon").image);
+                GUI.color = oldColor;
+                
+                if (GUI.Button(inputRect, "", GUIStyle.none))
+                {
+                    HandlePortClick(node, 0, false);
+                }
+                
+                // 输出端口
+                Rect outputRect = new Rect(node.WindowRect.width - 12, portPositionY, 24, 24);
+                oldColor = GUI.color;
+                if (isConnecting)
+                {
+                    if (connectionStartNode == node && connectionStartPort == 1)
+                        GUI.color = Color.yellow;
+                    else if (connectionStartNode != node)
+                        GUI.color = Color.green;
+                    else
+                        GUI.color = new Color(0.8f, 0.8f, 0.2f);
+                }
+                else
+                {
+                    GUI.color = new Color(0.8f, 0.8f, 0.2f);
+                }
+                
+                GUI.DrawTexture(outputRect, EditorGUIUtility.IconContent("d_GridLayoutGroup Icon").image);
+                GUI.color = oldColor;
+                
+                if (GUI.Button(outputRect, "", GUIStyle.none))
+                {
+                    HandlePortClick(node, 1, true);
+                }
+                
+                // 预览区域
+                if (tillingNode.GetPreviewTexture() != null)
+                {
+                    GUILayout.Box("Preview", GUILayout.ExpandWidth(true));
+                    Rect previewRect = GUILayoutUtility.GetRect(contentWidth, 150);
+                    GUI.DrawTexture(previewRect, tillingNode.GetPreviewTexture(), ScaleMode.ScaleToFit);
+                    currentHeight += 170;
+                }
+            }
             
             GUILayout.Space(5);
             currentHeight += 5;
@@ -697,9 +786,9 @@ namespace NodeImageEditor
             {
                 return true; // InputImageNode只有输出端口
             }
-            else if (connectionStartNode is ColorAdjustmentNode || connectionStartNode is BlurNode)
+            else if (connectionStartNode is ColorAdjustmentNode || connectionStartNode is BlurNode || connectionStartNode is TillingOffsetNode)
             {
-                return connectionStartPort == 1; // ColorAdjustmentNode和BlurNode的输出端口索引为1
+                return connectionStartPort == 1; // 这些节点的输出端口索引为1
             }
             return false;
         }
