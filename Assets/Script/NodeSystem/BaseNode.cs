@@ -53,7 +53,7 @@ namespace NodeImageEditor
         {
             if (texture != null)
             {
-                previewTexture = new Texture2D(texture.width, texture.height);
+                previewTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
                 RenderTexture.active = texture;
                 previewTexture.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
                 previewTexture.Apply();

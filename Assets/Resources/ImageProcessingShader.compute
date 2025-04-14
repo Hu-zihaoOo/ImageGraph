@@ -2,8 +2,10 @@
 #pragma kernel ColorAdjustment
 #pragma kernel BlurEffect
 #pragma kernel TillingOffset
+#pragma kernel BlendTextures
 
 Texture2D<float4> InputTexture;
+Texture2D<float4> SecondTexture;
 RWTexture2D<float4> Result;
 SamplerState sampler_point_clamp;
 
@@ -16,6 +18,8 @@ float TillingX;
 float TillingY;
 float OffsetX;
 float OffsetY;
+int BlendMode;
+float BlendStrength;
 
 float3 RGBtoHSV(float3 rgb)
 {
@@ -49,20 +53,22 @@ void ColorAdjustment (uint3 id : SV_DispatchThreadID)
     float2 uv = float2(id.x, id.y) / float2(Result.Length.x, Result.Length.y);
     float4 color = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
     
+    // Store original alpha value
+    float originalAlpha = color.a;
 
     color.rgb *= Brightness;
     
-
     color.rgb = (color.rgb - 0.5f) * Contrast + 0.5f;
     
-
     float luminance = dot(color.rgb, float3(0.299f, 0.587f, 0.114f));
     color.rgb = lerp(float3(luminance, luminance, luminance), color.rgb, Saturation);
     
-
     float3 hsv = RGBtoHSV(color.rgb);
     hsv.x = fmod(hsv.x + Hue, 1.0f);
     color.rgb = HSVtoRGB(hsv);
+    
+    // Restore original alpha
+    color.a = originalAlpha;
     
     Result[id.xy] = color;
 }
@@ -76,14 +82,16 @@ void BlurEffect (uint3 id : SV_DispatchThreadID)
     float4 sum = float4(0, 0, 0, 0);
     int count = 0;
     
+    // Store original alpha from center pixel
+    float2 centerUV = float2(id.xy) / float2(Result.Length.xy);
+    float originalAlpha = InputTexture.SampleLevel(sampler_point_clamp, centerUV, 0).a;
+    
     for (int y = -BlurRadius; y <= BlurRadius; y++)
     {
         for (int x = -BlurRadius; x <= BlurRadius; x++)
         {
             int2 samplePos = int2(id.x + x, id.y + y);
-            // 检查采样位置是否在纹理范围内
-            if (samplePos.x >= 0 && samplePos.x < Result.Length.x && 
-                samplePos.y >= 0 && samplePos.y < Result.Length.y)
+
             {
                 float2 uv = float2(samplePos) / float2(Result.Length.xy);
                 sum += InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
@@ -94,7 +102,10 @@ void BlurEffect (uint3 id : SV_DispatchThreadID)
     
     if (count > 0)
     {
-        Result[id.xy] = sum / count;
+        float4 result = sum / count;
+        // Restore original alpha
+        result.a = originalAlpha;
+        Result[id.xy] = result;
     }
     else
     {
@@ -108,6 +119,9 @@ void TillingOffset (uint3 id : SV_DispatchThreadID)
 {
     float2 uv = float2(id.x, id.y) / float2(Result.Length.x, Result.Length.y);
     
+    // Store original color at current position for alpha reference
+    float4 originalColor = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    
     // Apply tilling and offset
     uv = uv * float2(TillingX, TillingY) + float2(OffsetX, OffsetY);
     
@@ -115,6 +129,46 @@ void TillingOffset (uint3 id : SV_DispatchThreadID)
     uv = frac(uv);
     
     float4 color = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    
+    // Preserve alpha from original position
+    color.a = originalColor.a;
+    
     Result[id.xy] = color;
+}
+
+[numthreads(8,8,1)]
+void BlendTextures (uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = float2(id.x, id.y) / float2(Result.Length.x, Result.Length.y);
+    
+
+    float4 color1 = InputTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    float4 color2 = SecondTexture.SampleLevel(sampler_point_clamp, uv, 0);
+    
+
+    float originalAlpha = color1.a;
+    
+
+    float4 resultColor;
+    
+    // BlendMode: 0 = Multiply, 1 = Add
+    if (BlendMode == 0) // Multiply
+    {
+        resultColor = color1 * color2;
+    }
+    else // Add
+    {
+        resultColor = float4(
+            saturate(color1.r + color2.r * BlendStrength),
+            saturate(color1.g + color2.g * BlendStrength),
+            saturate(color1.b + color2.b * BlendStrength),
+            saturate(color1.a + color2.a * BlendStrength)
+        );
+    }
+    
+
+    resultColor.a = originalAlpha;
+    
+    Result[id.xy] = resultColor;
 }
 

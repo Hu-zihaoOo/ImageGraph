@@ -165,17 +165,41 @@ namespace NodeImageEditor
             Dictionary<string, RenderTexture> nodeOutputs = new Dictionary<string, RenderTexture>();
             
             // 首先处理输入节点
-            RenderTexture inputRT = RenderTexture.GetTemporary(previewRenderTexture.width, previewRenderTexture.height, 0, RenderTextureFormat.ARGB32);
+            RenderTexture inputRT = RenderTexture.GetTemporary(previewRenderTexture.width, previewRenderTexture.height, 0, RenderTextureFormat.DefaultHDR);
             inputRT.enableRandomWrite = true;
             inputRT.Create();
             inputNode.ProcessPreview(null, inputRT, null);
             nodeOutputs[inputNode.NodeID] = inputRT;
             
-            // 给每个连接的节点设置预览
+            // 处理非BlendNode的节点
+            ProcessNonBlendNodes(nodeOutputs);
+            
+            // 特殊处理BlendNode节点，因为它们需要两个输入
+            ProcessBlendNodes(nodeOutputs);
+            
+            // 设置所有节点的预览
             foreach (var node in graph.GetAllNodes())
             {
-                // 跳过输入节点，已经处理过
-                if (node is InputImageNode)
+                if (nodeOutputs.ContainsKey(node.NodeID))
+                {
+                    node.SetPreviewTexture(nodeOutputs[node.NodeID]);
+                }
+            }
+            
+            // 释放临时纹理
+            foreach (var rt in nodeOutputs.Values)
+            {
+                RenderTexture.ReleaseTemporary(rt);
+            }
+        }
+        
+        private void ProcessNonBlendNodes(Dictionary<string, RenderTexture> nodeOutputs)
+        {
+            // 给每个连接的非Blend节点设置预览
+            foreach (var node in graph.GetAllNodes())
+            {
+                // 跳过输入节点和Blend节点，它们会单独处理
+                if (node is InputImageNode || node is BlendNode)
                     continue;
                     
                 // 检查节点是否有输入连接
@@ -202,7 +226,7 @@ namespace NodeImageEditor
                 RenderTexture inputTexture = nodeOutputs[inputNodeID];
                 
                 // 创建节点输出的纹理
-                RenderTexture outputTexture = RenderTexture.GetTemporary(previewRenderTexture.width, previewRenderTexture.height, 0, RenderTextureFormat.ARGB32);
+                RenderTexture outputTexture = RenderTexture.GetTemporary(previewRenderTexture.width, previewRenderTexture.height, 0, RenderTextureFormat.DefaultHDR);
                 outputTexture.enableRandomWrite = true;
                 outputTexture.Create();
                 
@@ -212,20 +236,125 @@ namespace NodeImageEditor
                 // 保存节点的输出
                 nodeOutputs[node.NodeID] = outputTexture;
             }
-            
-            // 设置所有节点的预览
+        }
+        
+        private void ProcessBlendNodes(Dictionary<string, RenderTexture> nodeOutputs)
+        {
+            // 处理所有BlendNode节点
             foreach (var node in graph.GetAllNodes())
             {
-                if (nodeOutputs.ContainsKey(node.NodeID))
+                if (!(node is BlendNode blendNode))
+                    continue;
+                
+                Debug.Log($"Processing BlendNode {node.NodeID}");
+                    
+                // 查找两个输入连接
+                string input1NodeID = null;
+                string input2NodeID = null;
+                
+                // 列出所有连接用于调试
+                Debug.Log($"All connections in graph: {graph.GetAllConnections().Count}");
+                foreach (var conn in graph.GetAllConnections())
                 {
-                    node.SetPreviewTexture(nodeOutputs[node.NodeID]);
+                    Debug.Log($"Connection: FromNodeID={conn.FromNodeID}, FromPortIndex={conn.FromPortIndex}, ToNodeID={conn.ToNodeID}, ToPortIndex={conn.ToPortIndex}");
                 }
-            }
-            
-            // 释放临时纹理
-            foreach (var rt in nodeOutputs.Values)
-            {
-                RenderTexture.ReleaseTemporary(rt);
+                
+                // 查找连接到当前BlendNode的输入
+                foreach (var conn in graph.GetAllConnections())
+                {
+                    if (conn.ToNodeID == node.NodeID)
+                    {
+                        Debug.Log($"Found connection to BlendNode: ToPortIndex={conn.ToPortIndex}, FromNodeID={conn.FromNodeID}");
+                        if (conn.ToPortIndex == 0)
+                        {
+                            input1NodeID = conn.FromNodeID;
+                            Debug.Log($"Assigned input1NodeID = {input1NodeID}");
+                        }
+                        else if (conn.ToPortIndex == 1)
+                        {
+                            input2NodeID = conn.FromNodeID;
+                            Debug.Log($"Assigned input2NodeID = {input2NodeID}");
+                        }
+                    }
+                }
+                
+                // 检查是否有足够的输入
+                bool hasInput1 = input1NodeID != null && nodeOutputs.ContainsKey(input1NodeID);
+                bool hasInput2 = input2NodeID != null && nodeOutputs.ContainsKey(input2NodeID);
+                
+                // 输出详细调试信息
+                Debug.Log($"BlendNode {node.NodeID}: input1NodeID={input1NodeID}, exists in outputs={input1NodeID != null && nodeOutputs.ContainsKey(input1NodeID)}");
+                Debug.Log($"BlendNode {node.NodeID}: input2NodeID={input2NodeID}, exists in outputs={input2NodeID != null && nodeOutputs.ContainsKey(input2NodeID)}");
+                
+                // 输出nodeOutputs中的所有键
+                string outputKeys = "NodeOutputs keys: ";
+                foreach (var key in nodeOutputs.Keys)
+                {
+                    outputKeys += key + ", ";
+                }
+                Debug.Log(outputKeys);
+                
+                // 如果没有任何输入，跳过处理
+                if (!hasInput1 && !hasInput2)
+                {
+                    Debug.LogWarning($"BlendNode {node.NodeID}: No valid inputs found");
+                    continue;
+                }
+                
+                // 创建节点输出的纹理
+                RenderTexture outputTexture = RenderTexture.GetTemporary(previewRenderTexture.width, previewRenderTexture.height, 0, RenderTextureFormat.DefaultHDR);
+                outputTexture.enableRandomWrite = true;
+                outputTexture.Create();
+                
+                // 如果有两个输入，使用特殊处理方法进行混合
+                if (hasInput1 && hasInput2)
+                {
+                    Debug.Log($"BlendNode {node.NodeID}: Processing with two inputs");
+                    RenderTexture input1Texture = nodeOutputs[input1NodeID];
+                    RenderTexture input2Texture = nodeOutputs[input2NodeID];
+                    
+                    if (input1Texture == null || input2Texture == null)
+                    {
+                        Debug.LogError($"BlendNode {node.NodeID}: One of the input textures is null despite being in nodeOutputs");
+                        if (input1Texture != null)
+                            Graphics.Blit(input1Texture, outputTexture);
+                        else if (input2Texture != null)
+                            Graphics.Blit(input2Texture, outputTexture);
+                        nodeOutputs[node.NodeID] = outputTexture;
+                        continue;
+                    }
+                    
+                    Debug.Log($"Input1: {input1Texture.width}x{input1Texture.height}, Input2: {input2Texture.width}x{input2Texture.height}");
+                    
+                    // 使用特殊方法处理两个输入
+                    try
+                    {
+                        blendNode.ProcessPreviewWithTwoInputs(input1Texture, input2Texture, outputTexture);
+                        Debug.Log($"BlendNode {node.NodeID}: Successfully processed with ProcessPreviewWithTwoInputs");
+                    }
+                    catch (System.Exception e)
+                    {
+                        Debug.LogError($"BlendNode {node.NodeID}: Error in ProcessPreviewWithTwoInputs: {e.Message}");
+                        // 出错时使用简单的混合
+                        Graphics.Blit(input1Texture, outputTexture);
+                    }
+                }
+                else if (hasInput1)
+                {
+                    // 只有一个输入，直接复制
+                    Debug.Log($"BlendNode {node.NodeID}: Only input 1 available, copying");
+                    Graphics.Blit(nodeOutputs[input1NodeID], outputTexture);
+                }
+                else if (hasInput2)
+                {
+                    // 只有一个输入，直接复制
+                    Debug.Log($"BlendNode {node.NodeID}: Only input 2 available, copying");
+                    Graphics.Blit(nodeOutputs[input2NodeID], outputTexture);
+                }
+                
+                // 保存节点的输出
+                nodeOutputs[node.NodeID] = outputTexture;
+                Debug.Log($"BlendNode {node.NodeID}: Added output texture to nodeOutputs");
             }
         }
         
@@ -245,7 +374,7 @@ namespace NodeImageEditor
             BaseNode outputNode = null;
             foreach (var node in graph.GetAllNodes())
             {
-                if (node is BlurNode || node is ColorAdjustmentNode || node is TillingOffsetNode)
+                if (node is BlurNode || node is ColorAdjustmentNode || node is TillingOffsetNode || node is BlendNode)
                 {
                     if (outputNode == null || node.NodeID.CompareTo(outputNode.NodeID) > 0)
                     {
@@ -306,6 +435,13 @@ namespace NodeImageEditor
                 var tillingNode = new TillingOffsetNode();
                 tillingNode.WindowRect = new Rect(300, 50, 200, 350);
                 graph.AddNode(tillingNode);
+            }
+            
+            if (GUILayout.Button("Add Blend Node", EditorStyles.toolbarButton))
+            {
+                var blendNode = new BlendNode();
+                blendNode.WindowRect = new Rect(300, 50, 200, 350);
+                graph.AddNode(blendNode);
             }
             
             if (GUILayout.Button("Process Graph", EditorStyles.toolbarButton))
@@ -674,6 +810,115 @@ namespace NodeImageEditor
                     currentHeight += 170;
                 }
             }
+            else if (node is BlendNode blendNode)
+            {
+                // 标题区域
+                GUILayout.Label(node.Name, EditorStyles.boldLabel);
+                currentHeight += EditorGUIUtility.singleLineHeight + 5;
+                
+                // Blend adjustment area
+                GUILayout.BeginVertical(GUI.skin.box);
+                EditorGUI.BeginChangeCheck();
+                blendNode.BlendMode = (Processors.BlendMode)EditorGUILayout.EnumPopup("Blend Mode", blendNode.BlendMode);
+                blendNode.BlendStrength = EditorGUILayout.Slider("Blend Strength", blendNode.BlendStrength, 0.0f, 2.0f);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Repaint();
+                }
+                GUILayout.EndVertical();
+                currentHeight += EditorGUIUtility.singleLineHeight * 3 + 12;
+                
+                // 计算端口位置 - 两个输入端口和一个输出端口
+                float port1Y = Mathf.Min(50, originalHeight * 0.2f);
+                float port2Y = Mathf.Min(90, originalHeight * 0.4f);
+                float outputPortY = Mathf.Min(70, originalHeight * 0.3f);
+                
+                // 第一个输入端口
+                Rect input1Rect = new Rect(-12, port1Y, 24, 24);
+                Color oldColor = GUI.color;
+                if (isConnecting)
+                {
+                    if (connectionStartNode == node && connectionStartPort == 0)
+                        GUI.color = Color.yellow;
+                    else if (connectionStartNode != node)
+                        GUI.color = Color.green;
+                    else
+                        GUI.color = new Color(0.2f, 0.6f, 0.8f);
+                }
+                else
+                {
+                    GUI.color = new Color(0.2f, 0.6f, 0.8f);
+                }
+                
+                GUI.DrawTexture(input1Rect, EditorGUIUtility.IconContent("d_GridLayoutGroup Icon").image);
+                GUI.Label(new Rect(15, port1Y, 50, 20), "In 1");
+                GUI.color = oldColor;
+                
+                if (GUI.Button(input1Rect, "", GUIStyle.none))
+                {
+                    HandlePortClick(node, 0, false);
+                }
+                
+                // 第二个输入端口
+                Rect input2Rect = new Rect(-12, port2Y, 24, 24);
+                oldColor = GUI.color;
+                if (isConnecting)
+                {
+                    if (connectionStartNode == node && connectionStartPort == 1)
+                        GUI.color = Color.yellow;
+                    else if (connectionStartNode != node)
+                        GUI.color = Color.green;
+                    else
+                        GUI.color = new Color(0.2f, 0.6f, 0.8f);
+                }
+                else
+                {
+                    GUI.color = new Color(0.2f, 0.6f, 0.8f);
+                }
+                
+                GUI.DrawTexture(input2Rect, EditorGUIUtility.IconContent("d_GridLayoutGroup Icon").image);
+                GUI.Label(new Rect(15, port2Y, 50, 20), "In 2");
+                GUI.color = oldColor;
+                
+                if (GUI.Button(input2Rect, "", GUIStyle.none))
+                {
+                    HandlePortClick(node, 1, false);
+                }
+                
+                // 输出端口
+                Rect outputRect = new Rect(node.WindowRect.width - 12, outputPortY, 24, 24);
+                oldColor = GUI.color;
+                if (isConnecting)
+                {
+                    if (connectionStartNode == node && connectionStartPort == 2)
+                        GUI.color = Color.yellow;
+                    else if (connectionStartNode != node)
+                        GUI.color = Color.green;
+                    else
+                        GUI.color = new Color(0.8f, 0.8f, 0.2f);
+                }
+                else
+                {
+                    GUI.color = new Color(0.8f, 0.8f, 0.2f);
+                }
+                
+                GUI.DrawTexture(outputRect, EditorGUIUtility.IconContent("d_GridLayoutGroup Icon").image);
+                GUI.color = oldColor;
+                
+                if (GUI.Button(outputRect, "", GUIStyle.none))
+                {
+                    HandlePortClick(node, 2, true);
+                }
+                
+                // 预览区域
+                if (blendNode.GetPreviewTexture() != null)
+                {
+                    GUILayout.Box("Preview", GUILayout.ExpandWidth(true));
+                    Rect previewRect = GUILayoutUtility.GetRect(contentWidth, 150);
+                    GUI.DrawTexture(previewRect, blendNode.GetPreviewTexture(), ScaleMode.ScaleToFit);
+                    currentHeight += 170;
+                }
+            }
             
             GUILayout.Space(5);
             currentHeight += 5;
@@ -790,6 +1035,10 @@ namespace NodeImageEditor
             {
                 return connectionStartPort == 1; // 这些节点的输出端口索引为1
             }
+            else if (connectionStartNode is BlendNode)
+            {
+                return connectionStartPort == 2; // BlendNode的输出端口索引为2
+            }
             return false;
         }
         
@@ -814,11 +1063,8 @@ namespace NodeImageEditor
                     if (fromNode != null && toNode != null)
                     {
                         // 计算端口位置
-                        float fromNodePortY = Mathf.Min(fromNode.WindowRect.y + 70, fromNode.WindowRect.y + fromNode.WindowRect.height * 0.3f);
-                        Vector2 startPos = new Vector2(fromNode.WindowRect.x + fromNode.WindowRect.width, fromNodePortY);
-                        
-                        float toNodePortY = Mathf.Min(toNode.WindowRect.y + 70, toNode.WindowRect.y + toNode.WindowRect.height * 0.3f);
-                        Vector2 endPos = new Vector2(toNode.WindowRect.x, toNodePortY);
+                        Vector2 startPos = GetPortPosition(fromNode, connection.FromPortIndex, true);
+                        Vector2 endPos = GetPortPosition(toNode, connection.ToPortIndex, false);
                         
                         // 计算控制点
                         Vector2 startTangent = startPos + Vector2.right * 60;
@@ -847,17 +1093,9 @@ namespace NodeImageEditor
                 
                 if (fromNode != null && toNode != null)
                 {
-                    // 根据节点类型计算端口位置
-                    Vector2 startPos;
-                    Vector2 endPos;
-                    
-                    // 计算输出端口位置 - 始终在右侧，但垂直位置会根据节点大小变化
-                    float fromNodePortY = Mathf.Min(fromNode.WindowRect.y + 70, fromNode.WindowRect.y + fromNode.WindowRect.height * 0.3f);
-                    startPos = new Vector2(fromNode.WindowRect.x + fromNode.WindowRect.width, fromNodePortY);
-                    
-                    // 计算输入端口位置 - 始终在左侧，但垂直位置会根据节点大小变化
-                    float toNodePortY = Mathf.Min(toNode.WindowRect.y + 70, toNode.WindowRect.y + toNode.WindowRect.height * 0.3f);
-                    endPos = new Vector2(toNode.WindowRect.x, toNodePortY);
+                    // 获取端口位置
+                    Vector2 startPos = GetPortPosition(fromNode, connection.FromPortIndex, true);
+                    Vector2 endPos = GetPortPosition(toNode, connection.ToPortIndex, false);
                     
                     // Draw line with more appealing style
                     Handles.BeginGUI();
@@ -895,16 +1133,12 @@ namespace NodeImageEditor
                 if (isFromOutput)
                 {
                     // 从输出端口开始连接
-                    float portY = Mathf.Min(connectionStartNode.WindowRect.y + 70, 
-                                           connectionStartNode.WindowRect.y + connectionStartNode.WindowRect.height * 0.3f);
-                    startPos = new Vector2(connectionStartNode.WindowRect.x + connectionStartNode.WindowRect.width, portY);
+                    startPos = GetPortPosition(connectionStartNode, connectionStartPort, true);
                 }
                 else
                 {
                     // 从输入端口开始连接
-                    float portY = Mathf.Min(connectionStartNode.WindowRect.y + 70, 
-                                           connectionStartNode.WindowRect.y + connectionStartNode.WindowRect.height * 0.3f);
-                    startPos = new Vector2(connectionStartNode.WindowRect.x, portY);
+                    startPos = GetPortPosition(connectionStartNode, connectionStartPort, false);
                 }
                 
                 Vector2 endPos = Event.current.mousePosition;
@@ -1155,6 +1389,47 @@ namespace NodeImageEditor
             points[4] = points[0];
             Handles.DrawAAPolyLine(2.0f, points);
             Handles.EndGUI();
+        }
+        
+        // 获取端口位置的辅助方法
+        private Vector2 GetPortPosition(BaseNode node, int portIndex, bool isOutput)
+        {
+            if (node is BlendNode blendNode)
+            {
+                if (isOutput)
+                {
+                    // BlendNode的输出端口 (portIndex应该是2)
+                    float outputPortY = Mathf.Min(70, node.WindowRect.height * 0.3f);
+                    return new Vector2(node.WindowRect.x + node.WindowRect.width, node.WindowRect.y + outputPortY);
+                }
+                else
+                {
+                    // BlendNode的输入端口 (portIndex 0 或 1)
+                    if (portIndex == 0)
+                    {
+                        float port1Y = Mathf.Min(50, node.WindowRect.height * 0.2f);
+                        return new Vector2(node.WindowRect.x, node.WindowRect.y + port1Y);
+                    }
+                    else // portIndex == 1
+                    {
+                        float port2Y = Mathf.Min(90, node.WindowRect.height * 0.4f);
+                        return new Vector2(node.WindowRect.x, node.WindowRect.y + port2Y);
+                    }
+                }
+            }
+            else
+            {
+                // 其他节点使用默认端口位置
+                float portPositionY = Mathf.Min(70, node.WindowRect.height * 0.3f);
+                if (isOutput)
+                {
+                    return new Vector2(node.WindowRect.x + node.WindowRect.width, node.WindowRect.y + portPositionY);
+                }
+                else
+                {
+                    return new Vector2(node.WindowRect.x, node.WindowRect.y + portPositionY);
+                }
+            }
         }
     }
 } 
